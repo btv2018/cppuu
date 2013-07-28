@@ -1,3 +1,4 @@
+#include <cassert>
 #include <string>
 #include <vector>
 #include <ostream>
@@ -7,179 +8,188 @@
 
 namespace cppuu { namespace json {
 
-struct ja;
-struct jo;
+struct json_array;
+struct json_object;
 
-void write_a(std::ostream& os, const ja* a);
-void write_o(std::ostream& os, const jo* o);
+void write_array(std::ostream& os, const json_array* array);
+void write_object(std::ostream& os, const json_object* object);
 
-struct jv {
+void write_json_string(std::ostream& os, const char* str) {
+    os << '"';
+    int i = 0;
+    while (const char ch = str[i++]) {
+        if (ch == '\\' || ch == '"') {
+            os << '\\';
+        }
+        os << ch;
+    }
+    os << '"';
+}
+
+void write_json_string(std::ostream& os, const std::string* str) {
+    // TODO: handle \0
+    write_json_string(os, str->c_str());
+}
+
+class json_value {
     enum ValueType {
         NIL,
         BOOL,
         INT,
+        DOUBLE,
+        C_STRING,
         STRING,
         ARRAY,
         OBJECT,
     };
     ValueType type;
-
     boost::any value;
-    jv() : type(NIL) {}
-    jv(int v) : value(v), type(INT) {}
-    jv(bool v) : value(v), type(BOOL) {}
-    jv(const std::string& v) : value(v), type(STRING) {}
-    jv(const ja& v) : value(v), type(ARRAY) {}
-    jv(const jo& v) : value(v), type(OBJECT) {}
+
+public:
+    json_value() : type(NIL) {}
+    json_value(std::nullptr_t) : type(NIL) {}
+    json_value(bool v) : type(BOOL), value(v) {}
+    json_value(int v) : type(INT), value(v) {}
+    json_value(double v) : type(DOUBLE), value(v) {}
+    json_value(const char* v) : type(C_STRING), value(v) {}
+    //json_value(const std::string& v) : type(STRING), value(v) {}
+    json_value(std::string&& v) : type(STRING), value(v) {}
+    json_value(const json_array& v) : type(ARRAY), value(v) {}
+    json_value(const json_object& v) : type(OBJECT), value(v) {}
+
     void write(std::ostream& os) const {
-        if (type == NIL) {
+        switch (type) {
+          case NIL: {
             os << "null";
-        } else if (type == BOOL) {
-            bool v = boost::any_cast<bool>(value);
-            os << (true ? "true" : "false");
-        } else if (type == INT) {
+            break;
+          }
+          case BOOL: {
+            os << (boost::any_cast<bool>(value) ? "true" : "false");
+            break;
+          }
+          case INT: {
             os << boost::any_cast<int>(value);
-        } else if (type == STRING) {
-            os << *boost::any_cast<std::string>(&value);
-        } else if (type == ARRAY) {
-            write_a(os, boost::any_cast<ja>(&value));
-        } else if (type == OBJECT) {
-            write_o(os, boost::any_cast<jo>(&value));
-        }
+            break;
+          }
+          case DOUBLE: {
+            os << boost::any_cast<double>(value);
+            break;
+          }
+          case C_STRING: {
+            write_json_string(os, boost::any_cast<const char*>(value));
+            break;
+          }
+          case STRING: {
+            write_json_string(os, boost::any_cast<std::string>(&value));
+            break;
+          }
+          case ARRAY: {
+            write_array(os, boost::any_cast<json_array>(&value));
+            break;
+          }
+          case OBJECT: {
+            write_object(os, boost::any_cast<json_object>(&value));
+            break;
+          }
+          default: {
+            assert(false);
+          }
+        }  
     }
 };
 
-struct ja {
-    std::vector<jv> jvs;
+class json_array {
+    std::vector<json_value> values;
+
+public:
+    json_array() {}
+
+    json_array(std::initializer_list<json_value> list) : values(list) {}
+
+    void add_value(json_value&& value) {
+        values.push_back(value);
+    }
+
     void write(std::ostream& os) const {
         os << '[';
-        for (auto it = begin(jvs); it != end(jvs); ++it) {
-            os << ", ";
+        auto it = begin(values);
+        if (it != end(values)) {
             it->write(os);
+            for (++it; it != end(values); ++it) {
+                os << ", ";
+                it->write(os);
+            }
         }
         os << ']';
     }
 };
 
-struct jp {
+class json_pair {
+    const char* c_key;
     std::string key;
-    jv value;
-    jp() {}
-    jp(const std::string& key, const jv& value) : key(key), value(value) {}
+    json_value value;
+
+public:
+    json_pair() {}
+
+    json_pair(std::string&& key, json_value&& value = nullptr)
+      : c_key(0), key(key), value(value) {}
+    
+    json_pair(const char* key, json_value&& value = nullptr)
+      : c_key(key), value(value) {}
+    
     void write(std::ostream& os) const {
-        os << key << ": ";
+        if (c_key) {
+            write_json_string(os, c_key);
+        } else {
+            write_json_string(os, &key);
+        }
+        os << ": ";
         value.write(os);
     }
 };
 
-struct jo {
-    std::vector<jp> jps;
+class json_object {
+    std::vector<json_pair> pairs;
+
+public:
+    json_object() {}
+
+    json_object(std::initializer_list<json_pair> list) : pairs(list) {}
+
+    json_object(json_pair&& pair) : pairs{pair} {}
+
+    void add_member(json_pair&& pair) {
+        pairs.push_back(pair);
+    }
+
     void write(std::ostream& os) const {
         os << '{';
-        for (auto it = begin(jps); it != end(jps); ++it) {
-            os << ", ";
+        auto it = begin(pairs);
+        if (it != end(pairs)) {
             it->write(os);
+            for (++it; it != end(pairs); ++it) {
+                os << ", ";
+                it->write(os);
+            }
         }
         os << '}';
     }
 };
 
 
-void write_a(std::ostream& os, const ja* a) {
-    a->write(os);
+void write_array(std::ostream& os, const json_array* array) {
+    array->write(os);
 }
 
-void write_o(std::ostream& os, const jo* o) {
-    o->write(os);
+void write_object(std::ostream& os, const json_object* object) {
+    object->write(os);
 }
 
 std::string quote_json_string(const char* str) {
     std::string result("\"");
     return result.append(str).append("\"");
 }
-
-
-template<typename T>
-void write_value(std::ostream& os, T value) {
-    os << value;
-}
-
-template<>
-void write_value<bool>(std::ostream& os, bool value) {
-    if (value) {
-        os << "true";
-    } else {
-        os << "false";
-    }
-}
-
-
-template<>
-void write_value<const char*>(std::ostream& os, const char* value) {
-    os << quote_json_string(value);
-}
-
-
-template<typename T>
-class json_t {
-    const char* key;
-    const T value;
-
-public:
-    json_t(const char* key, const T& value) : key(key), value(value) {}
-
-    void write(std::ostream& os) const {
-        os << '{' << quote_json_string(key) << ':';
-        write_value(os, value);
-        os << '}';
-    }
-};
-
-template<typename T>
-void write_value(std::ostream& os, const json_t<T>& value) {
-//    os << '{';
-    value.write(os);
-//    os << '}';
-}
-
-
-
-template<typename T>
-json_t<T> make(const char* key, T value) {
-    return json_t<T>(key, value);
-}
-
-
-// ---------------------------------------------------------------------------
-class json {
-    const std::string key;
-
-public:
-    json(const std::string& key) : key(key) {}
-
-    virtual ~json() {}
-
-    void write(std::ostream& os) {
-//        os << '{' << quote_json_string(key) << ':';
-        write_value(os);
-        os << '}';
-    }
-
-    virtual void write_value(std::ostream& os) const = 0;
-};
-
-class json_string : public json {
-    const std::string value;
-
-public:
-    json_string(const std::string& key, const std::string& value)
-        : json(key), value(value) {}
-
-    virtual void write_value(std::ostream& os) const {
- //       os << quote_json_string(value);
-    }
-};
-
 
 } } // namespace cppuu json
 
