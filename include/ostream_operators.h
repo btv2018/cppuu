@@ -2,6 +2,7 @@
 #define __OSTREAM_OPERATORS_H_
 
 #include <iostream>
+#include <sstream>
 #include <map>
 #include <set>
 
@@ -13,8 +14,8 @@ void print_iterable(std::ostream& os, T arg) {
     typename T::const_iterator it = arg.begin();
     if (it != arg.end()) {
         os << *it;
+        ++it;
     }
-    ++it;
     for (; it != arg.end(); ++it) {
         os << ", " << *it;
     }
